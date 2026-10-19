@@ -8,10 +8,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./op": "./src/screen-op.ts",
-    "./frame": "./src/screen-frame.ts",
-    "./canvas": "./src/screen-canvas.ts",
-    "./stream": "./src/screen-stream.ts"
+    "./op": "./src/op-stream.ts",
+    "./parts": "./src/update-parts.ts",
+    "./surface": "./src/surface.ts"
   },
   "files": [
     "src",
@@ -25,7 +24,7 @@
   },
   "devDependencies": {
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
+    "vitest": "^5.0.3",
     "@types/node": "^22.0.0",
     "jsdom": "^25.0.0"
   },

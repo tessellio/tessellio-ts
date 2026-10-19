@@ -1,5 +1,5 @@
 /**
- * Screen-frame op-stream decoding and coverage validation.
+ * Update op-stream decoding and coverage validation.
  *
  * A region payload carries a raw DEFLATE stream (RFC 1951) whose decompressed
  * bytes are an op stream: `ROW`, `SPAN`, `FILL`, `END`, all little-endian. One
@@ -7,7 +7,7 @@
  * enforces every rule (and, when a target is supplied, writes the runs), so the
  * validation pass and the application pass cannot diverge.
  *
- * A frame is validated as a whole before a single cell is written, and the
+ * A update is validated as a whole before a single cell is written, and the
  * walker never allocates per op: the earlier shape — a generator that allocated
  * one object per op and was walked twice — cost ~250 ns per op, which a 50 k-op
  * 1080p reset paid twice and which the conformance corpus (≤ 512×512) could not
@@ -16,18 +16,18 @@
 
 /**
  * Receiver-side rejection vocabulary. These names travel on the wire in
- * `screen.frame.resync.reason`, which is the only receiver signal the platform
+ * `screen.update.resync.reason`, which is the only receiver signal the platform
  * aggregates.
  */
 export const RESYNC_REASONS = [
   "BASE_MISMATCH",
-  "INCOMPLETE_FRAME",
+  "INCOMPLETE_UPDATE",
   "DECODE_ERROR",
   "COVERAGE_INVALID",
   "UNKNOWN_CODEC",
   "QUEUE_OVERFLOW",
   "GEOMETRY_MISMATCH",
-  "CHUNK_GAP",
+  "PART_GAP",
 ] as const;
 
 export type ResyncReason = (typeof RESYNC_REASONS)[number];
@@ -64,7 +64,7 @@ const VERDICT_COVERAGE: DecodeResult = { ok: false, reason: "COVERAGE_INVALID" }
  * raw the 16-bit cell format words and clips runs to the target's length (`applyOps`), while
  * `Uint32Array`/`Uint8ClampedArray` write packed RGBA — the little-endian fast
  * path and the byte-order fallback. Those RGBA targets must supply `lut`.
- * A `null` target validates without writing, which is how a frame is rejected
+ * A `null` target validates without writing, which is how a update is rejected
  * before its first cell is written.
  *
  * The verdict is one of the three shared {@link DecodeResult} objects; the walk
@@ -284,9 +284,9 @@ const EMPTY_BYTES = new Uint8Array(0);
 /**
  * Validate one decompressed op stream.
  *
- * Grammar rules apply to every frame: strictly increasing `ROW` order, a
+ * Grammar rules apply to every update: strictly increasing `ROW` order, a
  * `ROW` before the first writing op, `len >= 1`, `x + len <= width`, and
- * ascending non-overlapping runs within a row. On a reset frame
+ * ascending non-overlapping runs within a row. On a reset update
  * (`coverage === "full"`) every row `0..height-1` must be written exactly
  * once, contiguously from column `0` to column `width-1`.
  */
@@ -301,7 +301,7 @@ export function validateOpStream(ops: Uint8Array, region: RegionBox, coverage: C
  * the target are clipped.
  *
  * The stream is validated while it is applied ({@link walkOpStream}); a
- * malformed stream throws rather than writing the rest of a frame, which is
+ * malformed stream throws rather than writing the rest of a update, which is
  * why production callers validate first and pass the op bytes on.
  */
 export function applyOps(
@@ -340,20 +340,20 @@ function toStreamBytes(payload: Uint8Array): Uint8Array<ArrayBuffer> {
 
 /**
  * Inflate a region payload with a hard output bound, handing each decompressed
- * chunk to `append`. `append` returning `false` aborts the stream (the region
+ * part to `append`. `append` returning `false` aborts the stream (the region
  * cap was exceeded, or the caller ran out of storage).
  *
  * Returns `false` for every failure (invalid DEFLATE, output past `limit`, the
  * cap abort, or a runtime without a raw-DEFLATE decompressor). There is
  * deliberately no pure-JS fallback: a receiver that cannot inflate reports a
- * decode error and resynchronizes instead of skipping the frame silently. The
+ * decode error and resynchronizes instead of skipping the update silently. The
  * browser floor for this decoder is the one that ships
  * `DecompressionStream("deflate-raw")`.
  */
 async function inflateRegion(
   payload: Uint8Array<ArrayBuffer>,
   limit: number,
-  append: (chunk: Uint8Array) => boolean,
+  append: (part: Uint8Array) => boolean,
 ): Promise<boolean> {
   const Ctor: DecompressionStreamCtor | null =
     typeof DecompressionStream === "function" ? DecompressionStream : null;
@@ -399,13 +399,13 @@ async function inflateRegion(
  * Decompress and validate one region payload.
  *
  * The validated op bytes are handed to `sink.ops` for the application pass, so
- * the compressed payload is inflated exactly once and the frame can be
+ * the compressed payload is inflated exactly once and the update can be
  * validated as a whole before the first write.
  *
  * This entry point owns its output buffer and is meant for single-region work
- * (tests, the corpus consumer). The receiver's frame path decodes through a
+ * (tests, the corpus consumer). The receiver's update path decodes through a
  * {@link RegionOpsPool} so a steady stream allocates nothing and the regions of
- * one frame can be inflated concurrently.
+ * one update can be inflated concurrently.
  */
 export async function decompressAndValidate(
   payload: Uint8Array,
@@ -422,11 +422,11 @@ export async function decompressAndValidate(
     return VERDICT_DECODE;
   }
 
-  const chunks: Uint8Array[] = [];
+  const parts: Uint8Array[] = [];
   let total = 0;
-  const ok = await inflateRegion(toStreamBytes(payload), MAX_REGION_OPS_BYTES, (chunk) => {
-    total += chunk.byteLength;
-    chunks.push(chunk);
+  const ok = await inflateRegion(toStreamBytes(payload), MAX_REGION_OPS_BYTES, (part) => {
+    total += part.byteLength;
+    parts.push(part);
     return true;
   });
   if (!ok) {
@@ -435,9 +435,9 @@ export async function decompressAndValidate(
 
   const ops = new Uint8Array(total);
   let offset = 0;
-  for (const chunk of chunks) {
-    ops.set(chunk, offset);
-    offset += chunk.byteLength;
+  for (const part of parts) {
+    ops.set(part, offset);
+    offset += part.byteLength;
   }
 
   const verdict = validateOpStream(ops, region, coverage);
@@ -451,45 +451,45 @@ export async function decompressAndValidate(
 
 type PoolSlot = { buffer: Uint8Array; length: number; retained: boolean };
 
-/** Slots retained across frames are capped so a hostile frame cannot pin RAM. */
+/** Slots retained across updates are capped so a hostile update cannot pin RAM. */
 const RETAINED_POOL_BYTES = 8 * 1024 * 1024;
 
 /**
- * Per-frame storage for decompressed region op streams.
+ * Per-update storage for decompressed region op streams.
  *
- * One slot per region index, reused across frames: `beginFrame` resets the
+ * One slot per region index, reused across updates: `beginUpdate` resets the
  * lengths, {@link append} grows a slot to fit what the inflater produces
  * (bounded by {@link MAX_REGION_OPS_BYTES} per region), and {@link view} hands
  * the bytes to the validator and the renderer. Slots are per region, so a
- * frame's regions can be inflated concurrently — each writes to its own slot.
+ * update's regions can be inflated concurrently — each writes to its own slot.
  *
- * Retention is bounded by {@link RETAINED_POOL_BYTES}: a frame whose op bytes
- * exceed it keeps its slots for that frame only and releases them at
- * {@link endFrame}.
+ * Retention is bounded by {@link RETAINED_POOL_BYTES}: a update whose op bytes
+ * exceed it keeps its slots for that update only and releases them at
+ * {@link endUpdate}.
  */
 export class RegionOpsPool {
   private readonly slots: PoolSlot[] = [];
   private retainedBytes = 0;
 
-  /** Start a frame: every slot restarts empty. */
-  beginFrame(): void {
+  /** Start a update: every slot restarts empty. */
+  beginUpdate(): void {
     for (const slot of this.slots) {
       slot.length = 0;
     }
   }
 
   /**
-   * Append one decompressed chunk to `slot`. Returns `false` when the region
+   * Append one decompressed part to `slot`. Returns `false` when the region
    * would exceed {@link MAX_REGION_OPS_BYTES}.
    */
-  append(slot: number, chunk: Uint8Array): boolean {
+  append(slot: number, part: Uint8Array): boolean {
     let entry = this.slots[slot];
     if (entry === undefined) {
       entry = { buffer: EMPTY_BYTES, length: 0, retained: false };
       this.slots[slot] = entry;
     }
 
-    const needed = entry.length + chunk.byteLength;
+    const needed = entry.length + part.byteLength;
     if (needed > MAX_REGION_OPS_BYTES) {
       return false;
     }
@@ -513,19 +513,19 @@ export class RegionOpsPool {
       }
     }
 
-    entry.buffer.set(chunk, entry.length);
+    entry.buffer.set(part, entry.length);
     entry.length = needed;
     return true;
   }
 
-  /** The bytes appended for `slot` in the frame in progress. */
+  /** The bytes appended for `slot` in the update in progress. */
   view(slot: number): Uint8Array {
     const entry = this.slots[slot];
     return entry === undefined ? EMPTY_BYTES : entry.buffer.subarray(0, entry.length);
   }
 
-  /** Release the slots an oversized frame allocated for its own use only. */
-  endFrame(): void {
+  /** Release the slots an oversized update allocated for its own use only. */
+  endUpdate(): void {
     for (const slot of this.slots) {
       if (!slot.retained) {
         slot.buffer = EMPTY_BYTES;
@@ -536,12 +536,12 @@ export class RegionOpsPool {
 }
 
 /**
- * Decode one region of a frame into `pool`: bounded inflate into the region's
- * slot, then op validation in the frame's coverage mode.
+ * Decode one region of a update into `pool`: bounded inflate into the region's
+ * slot, then op validation in the update's coverage mode.
  *
  * `pool.view(slot)` holds the validated op bytes when the result is ok. The
  * per-region side effect (the slot) makes this safe to run for every region of
- * a frame concurrently.
+ * a update concurrently.
  */
 export async function decodeRegionInto(
   payload: Uint8Array,
@@ -557,8 +557,8 @@ export async function decodeRegionInto(
     return VERDICT_DECODE;
   }
 
-  const ok = await inflateRegion(toStreamBytes(payload), MAX_REGION_OPS_BYTES, (chunk) =>
-    pool.append(slot, chunk),
+  const ok = await inflateRegion(toStreamBytes(payload), MAX_REGION_OPS_BYTES, (part) =>
+    pool.append(slot, part),
   );
   if (!ok) {
     return VERDICT_DECODE;

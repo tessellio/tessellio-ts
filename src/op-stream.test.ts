@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as Tools from "@tessellio/proto";
 
-import { ScreenFrameAssembler } from "./screen-frame";
+import { UpdateAssembler } from "./update-parts";
 import {
   MAX_REGION_OPS_BYTES,
   MAX_REGION_WIRE_BYTES,
@@ -15,7 +15,7 @@ import {
   validateOpStream,
   type DecodeResult,
   type ResyncReason,
-} from "./screen-op";
+} from "./op-stream";
 
 function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
   const normalized = hex.replaceAll(" ", "").replaceAll("\n", "");
@@ -45,7 +45,7 @@ function pixelsToHex(cells: Uint16Array): string {
 }
 
 /**
- * The corpus's canvas checksum for frames too large to record as cell hex:
+ * The corpus's canvas checksum for updates too large to record as cell hex:
  * IEEE CRC-32 (reflected polynomial `0xedb88320`, init/final `0xffffffff`)
  * over the little-endian the 16-bit cell format wire bytes — the same variant the Rust
  * consumer (`codec_conformance.rs`) and the corpus generator
@@ -111,7 +111,7 @@ function expectedCanvas(width: number, height: number, writes: Array<[number, nu
 /**
  * Hand-derived conformance vectors (design §9.1). Each vector's proto bytes,
  * op stream, and expected cells are transcribed from the specification; the
- * test walks the whole receiver path — protobuf decode, chunk parse and
+ * test walks the whole receiver path — protobuf decode, part parse and
  * validate, assembly, bounded decompress, op validation, application — so a
  * divergence anywhere in that chain fails here.
  */
@@ -155,18 +155,18 @@ const vectors = {
       box: { x: 0, y: 2, width: 8, height: 2 },
     },
   },
-  twoChunks: {
-    chunk0:
+  twoParts: {
+    part0:
       "08 0A 10 09 18 08 20 04 30 02 38 20 40 08 4a 1A 08 01 10 01 18 01 20 01 2A 10 " +
       "01 0B 00 F4 FF 01 00 00 02 00 00 01 00 00 F8 00",
-    chunk1:
+    part1:
       "08 0A 10 09 18 08 20 04 28 01 30 02 38 20 40 08 4A 18 08 02 18 01 20 01 2A 10 " +
       "01 0B 00 F4 FF 01 00 00 02 00 00 01 00 E0 07 00",
   },
 } as const;
 
 describe("hand-derived conformance vectors", () => {
-  it("V1 accepts an empty delta as a valid frame", () => {
+  it("V1 accepts an empty delta as a valid update", () => {
     const bytes = hexToBytes(vectors.emptyDelta.bytes);
     const decoded = Tools.Update.decode(bytes);
 
@@ -217,7 +217,7 @@ describe("hand-derived conformance vectors", () => {
     expect(pixelsToHex(canvas)).toBe(pixelsToHex(expected));
   });
 
-  it("V3 paints every row of a full-coverage reset frame", async () => {
+  it("V3 paints every row of a full-coverage reset update", async () => {
     const payload = hexToBytes(vectors.fullCoverageFill.payload);
     const proto = hexToBytes(`${vectors.fullCoverageFill.header} ${bytesToHex(payload)}`);
     const decoded = Tools.Update.decode(proto);
@@ -285,30 +285,30 @@ describe("hand-derived conformance vectors", () => {
     expect(pixelsToHex(canvas)).toBe(pixelsToHex(expected));
   });
 
-  it("V5 applies a two-chunk frame only after both chunks", async () => {
-    const chunk0 = Tools.Update.decode(hexToBytes(vectors.twoChunks.chunk0));
-    const chunk1 = Tools.Update.decode(hexToBytes(vectors.twoChunks.chunk1));
+  it("V5 applies a two-part update only after both parts", async () => {
+    const part0 = Tools.Update.decode(hexToBytes(vectors.twoParts.part0));
+    const part1 = Tools.Update.decode(hexToBytes(vectors.twoParts.part1));
 
-    expect(chunk0.updateId).toBe(10);
-    expect(chunk0.baseUpdateId).toBe(9);
-    expect(chunk0.partIndex).toBe(0);
-    expect(chunk1.partIndex).toBe(1);
-    expect(chunk0.partCount).toBe(2);
-    expect(chunk1.partCount).toBe(2);
-    expect(chunk0.updateBytes).toBe(32);
-    expect(chunk1.updateBytes).toBe(32);
-    expect(chunk0.regions[0]).toMatchObject({ x: 1, y: 1, width: 1, height: 1 });
-    expect(chunk1.regions[0]).toMatchObject({ x: 2, y: 0, width: 1, height: 1 });
+    expect(part0.updateId).toBe(10);
+    expect(part0.baseUpdateId).toBe(9);
+    expect(part0.partIndex).toBe(0);
+    expect(part1.partIndex).toBe(1);
+    expect(part0.partCount).toBe(2);
+    expect(part1.partCount).toBe(2);
+    expect(part0.updateBytes).toBe(32);
+    expect(part1.updateBytes).toBe(32);
+    expect(part0.regions[0]).toMatchObject({ x: 1, y: 1, width: 1, height: 1 });
+    expect(part1.regions[0]).toMatchObject({ x: 2, y: 0, width: 1, height: 1 });
     expect(
-      bytesToHex(Tools.Update.encode(chunk0).finish()),
-    ).toBe(canonicalHex(vectors.twoChunks.chunk0));
+      bytesToHex(Tools.Update.encode(part0).finish()),
+    ).toBe(canonicalHex(vectors.twoParts.part0));
     expect(
-      bytesToHex(Tools.Update.encode(chunk1).finish()),
-    ).toBe(canonicalHex(vectors.twoChunks.chunk1));
+      bytesToHex(Tools.Update.encode(part1).finish()),
+    ).toBe(canonicalHex(vectors.twoParts.part1));
 
     const canvas = new Uint16Array(8 * 4);
-    for (const chunk of [chunk0, chunk1]) {
-      for (const region of chunk.regions) {
+    for (const part of [part0, part1]) {
+      for (const region of part.regions) {
         const { result, ops } = await decodePayload(
           region.payload,
           { width: region.width, height: region.height },
@@ -526,7 +526,7 @@ describe("bounded decompression", () => {
   it("reports a decode error instead of skipping when deflate-raw is unavailable", async () => {
     // Documented contingency: a runtime without `DecompressionStream` cannot
     // inflate a region. The receiver treats that as a decode error and asks for
-    // a resync; it never applies the frame and never skips it silently.
+    // a resync; it never applies the update and never skips it silently.
     vi.stubGlobal("DecompressionStream", undefined);
     try {
       const { result, ops } = await decodePayload(
@@ -577,7 +577,7 @@ describe("applyOps", () => {
   it("throws instead of applying a malformed stream", () => {
     // The second run starts before the first one ends: the walk rejects the
     // stream, and the caller must not treat the partially written target as a
-    // frame.
+    // update.
     const ops = hexToBytes("01 00 00 03 00 00 03 00 FF FF " + "02 01 00 02 00 1F F8 FF 07 " + "00");
     const target = new Uint16Array(4);
 
@@ -609,17 +609,17 @@ const corpusPath = path.resolve(
 const corpus = readCorpus();
 
 type CorpusRegion = { x: number; y: number; width: number; height: number; payload: string };
-type CorpusChunk = { index: number; count: number; updateBytes: number; regions: CorpusRegion[] };
-type CorpusFrame = {
+type CorpusPart = { index: number; count: number; updateBytes: number; regions: CorpusRegion[] };
+type CorpusUpdate = {
   updateId: number;
   baseUpdateId: number;
   width: number;
   height: number;
-  chunks: CorpusChunk[];
+  parts: CorpusPart[];
   expect?: { cells565?: string; surfaceBytes?: number; surfaceCrc32?: string; ack?: boolean };
 };
-/** A standalone chunk fixture (the `chunk`/`chunks` expect-error shapes). */
-type CorpusChunkIdentity = {
+/** A standalone part fixture (the `part`/`parts` expect-error shapes). */
+type CorpusPartIdentity = {
   updateId: number;
   baseUpdateId: number;
   width: number;
@@ -633,31 +633,31 @@ type CorpusChunkIdentity = {
 type CorpusCase = {
   id: string;
   mode: "roundtrip" | "expect-error";
-  frames?: CorpusFrame[];
+  updates?: CorpusUpdate[];
   reason?: ResyncReason;
   payload?: string;
   region?: { width: number; height: number };
   coverage?: "full" | "sparse";
-  chunk?: CorpusChunkIdentity;
-  chunks?: CorpusChunkIdentity[];
+  part?: CorpusPartIdentity;
+  parts?: CorpusPartIdentity[];
 };
 
 /**
  * The corpus records the receiver's wire reason. The receiver's `ResyncReason`
  * union is deliberately coarser than the receiver's per-step codes: a framing
  * failure the receiver reports as `BASE_MISMATCH` (a bad base) or
- * `DECODE_ERROR` (an identity field, a mis-sequenced chunk) reaches the
- * receiver's assembler as `CHUNK_GAP`, and both heal identically sender-side. Only
+ * `DECODE_ERROR` (an identity field, a mis-sequenced part) reaches the
+ * receiver's assembler as `PART_GAP`, and both heal identically sender-side. Only
  * these two reasons admit the coarser answer; every other case is asserted
  * exactly.
  */
 const RECEIVER_REASON_EQUIVALENTS: Partial<Record<ResyncReason, ResyncReason[]>> = {
-  BASE_MISMATCH: ["BASE_MISMATCH", "CHUNK_GAP"],
-  DECODE_ERROR: ["DECODE_ERROR", "CHUNK_GAP"],
+  BASE_MISMATCH: ["BASE_MISMATCH", "PART_GAP"],
+  DECODE_ERROR: ["DECODE_ERROR", "PART_GAP"],
 };
 
-/** Convert one corpus chunk fixture into the assembler's input shape. */
-function toScreenFrameChunk(raw: CorpusChunkIdentity) {
+/** Convert one corpus part fixture into the assembler's input shape. */
+function toUpdatePart(raw: CorpusPartIdentity) {
   return {
     updateId: raw.updateId,
     baseUpdateId: raw.baseUpdateId,
@@ -702,15 +702,15 @@ if (corpus === null) {
     for (const testCase of corpus.cases) {
       it(`${testCase.id} (${testCase.mode})`, async () => {
         if (testCase.mode === "expect-error") {
-          // A chunk-level or assembly-level rejection is exercised through the
-          // assembler — the receiver's real entry point for a chunk — rather than
+          // A part-level or assembly-level rejection is exercised through the
+          // assembler — the receiver's real entry point for a part — rather than
           // through a region payload it does not carry.
-          if (testCase.chunk !== undefined || testCase.chunks !== undefined) {
-            const assembler = new ScreenFrameAssembler();
+          if (testCase.part !== undefined || testCase.parts !== undefined) {
+            const assembler = new UpdateAssembler();
             let resync: ResyncReason | null = null;
-            const fixtures = testCase.chunks ?? [testCase.chunk as CorpusChunkIdentity];
+            const fixtures = testCase.parts ?? [testCase.part as CorpusPartIdentity];
             for (const fixture of fixtures) {
-              const pushed = assembler.push(toScreenFrameChunk(fixture));
+              const pushed = assembler.push(toUpdatePart(fixture));
               resync = pushed.resync ?? resync;
             }
             expect(resync).not.toBeNull();
@@ -736,24 +736,24 @@ if (corpus === null) {
         }
 
         const canvas = new Uint16Array(
-          (testCase.frames?.[0]?.width ?? 0) * (testCase.frames?.[0]?.height ?? 0),
+          (testCase.updates?.[0]?.width ?? 0) * (testCase.updates?.[0]?.height ?? 0),
         );
-        for (const frame of testCase.frames ?? []) {
-          const width = frame.width;
-          const height = frame.height;
-          const assembler = new ScreenFrameAssembler();
+        for (const update of testCase.updates ?? []) {
+          const width = update.width;
+          const height = update.height;
+          const assembler = new UpdateAssembler();
           let assembled = null;
-          for (const chunk of frame.chunks) {
+          for (const part of update.parts) {
             const pushed = assembler.push({
-              updateId: frame.updateId,
-              baseUpdateId: frame.baseUpdateId,
+              updateId: update.updateId,
+              baseUpdateId: update.baseUpdateId,
               width,
               height,
-              partIndex: chunk.index,
-              partCount: chunk.count,
-              updateBytes: chunk.updateBytes,
+              partIndex: part.index,
+              partCount: part.count,
+              updateBytes: part.updateBytes,
               codec: 8,
-              regions: chunk.regions.map((entry) => ({
+              regions: part.regions.map((entry) => ({
                 x: entry.x,
                 y: entry.y,
                 width: entry.width,
@@ -762,13 +762,13 @@ if (corpus === null) {
               })),
             });
             expect(pushed.resync).toBeNull();
-            if (pushed.frame) {
-              assembled = pushed.frame;
+            if (pushed.update) {
+              assembled = pushed.update;
             }
           }
 
           expect(assembled).not.toBeNull();
-          const coverage = frame.baseUpdateId === 0 ? "full" : "sparse";
+          const coverage = update.baseUpdateId === 0 ? "full" : "sparse";
           for (const entry of assembled?.regions ?? []) {
             const { result, ops } = await decodePayload(
               entry.payload,
@@ -781,14 +781,14 @@ if (corpus === null) {
             }
           }
 
-          if (frame.expect?.cells565) {
-            expect(pixelsToHex(canvas)).toBe(canonicalHex(frame.expect.cells565));
+          if (update.expect?.cells565) {
+            expect(pixelsToHex(canvas)).toBe(canonicalHex(update.expect.cells565));
           } else {
             // A large canvas records its exact byte length and CRC instead of
             // the full cell hex; both are verified, exactly as the Rust
-            // consumer does. The branch is exhaustive on purpose: a frame
+            // consumer does. The branch is exhaustive on purpose: a update
             // with neither expectation is a corpus defect, not a pass.
-            const expected = frame.expect;
+            const expected = update.expect;
             expect(expected?.surfaceCrc32).toMatch(/^[0-9a-f]{8}$/);
             expect(canvas.byteLength).toBe(expected?.surfaceBytes);
             expect(surfaceCrc32(canvas).toString(16).padStart(8, "0")).toBe(

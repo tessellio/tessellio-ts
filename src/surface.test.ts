@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  ScreenCanvasRenderer,
+  SurfaceCanvasRenderer,
   buildRgb565Lut,
   detectByteOrder,
   setRgb565ByteOrderForTest,
-} from "./screen-canvas";
+} from "./surface";
 
 /**
  * jsdom has no `ImageData` and no 2D context, so the test supplies a minimal
@@ -149,10 +149,10 @@ describe("the 16-bit cell format lookup table", () => {
   });
 });
 
-describe("ScreenCanvasRenderer", () => {
+describe("SurfaceCanvasRenderer", () => {
   it("resizes, clears to opaque black, and reallocates its buffers", () => {
     const harness = createTestCanvas(2, 2);
-    const renderer = new ScreenCanvasRenderer(harness.canvas);
+    const renderer = new SurfaceCanvasRenderer(harness.canvas);
 
     renderer.resize(4, 3);
 
@@ -164,10 +164,10 @@ describe("ScreenCanvasRenderer", () => {
 
   it("applies FILL and SPAN regions and writes them on flush", () => {
     const harness = createTestCanvas(4, 2);
-    const renderer = new ScreenCanvasRenderer(harness.canvas);
+    const renderer = new SurfaceCanvasRenderer(harness.canvas);
     renderer.resize(4, 2);
 
-    renderer.applyFrame(
+    renderer.applyUpdate(
       { width: 4, height: 2 },
       [
         {
@@ -197,18 +197,18 @@ describe("ScreenCanvasRenderer", () => {
     // FILL and SPAN in one region, so the fallback's run writer is exercised.
     const ops = hexToBytes("01 00 00 03 00 00 02 00 00 F8 " + "02 02 00 02 00 E0 07 E0 FF " + "00");
     const fast = createTestCanvas(4, 1);
-    const fastRenderer = new ScreenCanvasRenderer(fast.canvas);
+    const fastRenderer = new SurfaceCanvasRenderer(fast.canvas);
     fastRenderer.resize(4, 1);
-    fastRenderer.applyFrame({ width: 4, height: 1 }, [
+    fastRenderer.applyUpdate({ width: 4, height: 1 }, [
       { region: { x: 0, y: 0, width: 4, height: 1 }, ops },
     ]);
     fastRenderer.flush();
 
     setRgb565ByteOrderForTest("big");
     const slow = createTestCanvas(4, 1);
-    const slowRenderer = new ScreenCanvasRenderer(slow.canvas);
+    const slowRenderer = new SurfaceCanvasRenderer(slow.canvas);
     slowRenderer.resize(4, 1);
-    slowRenderer.applyFrame({ width: 4, height: 1 }, [
+    slowRenderer.applyUpdate({ width: 4, height: 1 }, [
       { region: { x: 0, y: 0, width: 4, height: 1 }, ops },
     ]);
     slowRenderer.flush();
@@ -222,10 +222,10 @@ describe("ScreenCanvasRenderer", () => {
 
   it("merges nearby regions into one putImageData and keeps distant ones apart", () => {
     const nearby = createTestCanvas(8, 2);
-    const nearbyRenderer = new ScreenCanvasRenderer(nearby.canvas);
+    const nearbyRenderer = new SurfaceCanvasRenderer(nearby.canvas);
     nearbyRenderer.resize(8, 2);
     const fillOps = hexToBytes("01 00 00 03 00 00 01 00 00 F8 00");
-    nearbyRenderer.applyFrame(
+    nearbyRenderer.applyUpdate(
       { width: 8, height: 2 },
       [
         { region: { x: 0, y: 0, width: 1, height: 1 }, ops: fillOps },
@@ -237,9 +237,9 @@ describe("ScreenCanvasRenderer", () => {
     expect(nearby.draws).toEqual([{ x: 0, y: 0, width: 2, height: 1 }]);
 
     const far = createTestCanvas(16, 16);
-    const farRenderer = new ScreenCanvasRenderer(far.canvas);
+    const farRenderer = new SurfaceCanvasRenderer(far.canvas);
     farRenderer.resize(16, 16);
-    farRenderer.applyFrame(
+    farRenderer.applyUpdate(
       { width: 16, height: 16 },
       [
         { region: { x: 0, y: 0, width: 1, height: 1 }, ops: fillOps },
@@ -257,12 +257,12 @@ describe("ScreenCanvasRenderer", () => {
     expect(far.readPixel(8, 8)).toEqual([0, 0, 0, 255]);
   });
 
-  it("ignores a frame whose geometry does not match the last resize", () => {
+  it("ignores a update whose geometry does not match the last resize", () => {
     const harness = createTestCanvas(4, 2);
-    const renderer = new ScreenCanvasRenderer(harness.canvas);
+    const renderer = new SurfaceCanvasRenderer(harness.canvas);
     renderer.resize(4, 2);
 
-    renderer.applyFrame(
+    renderer.applyUpdate(
       { width: 2, height: 2 },
       [
         {

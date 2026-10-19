@@ -15,9 +15,9 @@ of truth for every number and every rule; this package is its mirror.
 
 | Module | What it holds |
 |---|---|
-| `screen-op` | the region op-stream decoder and the coverage rules |
-| `screen-frame` | the chunk assembler and the update's validation |
-| `screen-canvas` | the surface the receiver draws on |
+| `op-stream` | the region op-stream decoder and the coverage rules |
+| `update-parts` | the part assembler and the update's validation |
+| `surface` | the surface the receiver draws on |
 
 The receiver-side state machine — the part that reads a transport's chunk
 metadata and answers with the transport's acknowledgement window — is not
@@ -27,12 +27,12 @@ way round.
 ## Using it
 
 ```ts
-import { ScreenFrameAssembler, decodeRegionInto } from "@tessellio/ts";
+import { UpdateAssembler, decodeRegionInto } from "@tessellio/ts";
 ```
 
-`ScreenFrameAssembler` collects the parts of an update and validates the
-result as a whole; `decodeRegionInto` walks a region's op stream and paints
-the cells it names. An update is applied whole: every part of it, or none.
+`UpdateAssembler` collects the parts of an update and validates the result
+as a whole; `decodeRegionInto` walks a region's op stream and paints the
+cells it names. An update is applied whole: every part of it, or none.
 
 ## Verifying it
 

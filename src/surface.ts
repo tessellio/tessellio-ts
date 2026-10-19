@@ -13,7 +13,7 @@
  * four-byte-per-cell fallback for a big-endian host.
  */
 
-import { walkOpStream } from "./screen-op";
+import { walkOpStream } from "./op-stream";
 
 export type RgbaRect = { x: number; y: number; width: number; height: number };
 
@@ -113,7 +113,7 @@ function mergeDirtyRects(rects: RgbaRect[]): RgbaRect[] {
   return rects;
 }
 
-export class ScreenCanvasRenderer {
+export class SurfaceCanvasRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D | null;
   private readonly byteOrder: ByteOrder;
@@ -121,7 +121,7 @@ export class ScreenCanvasRenderer {
 
   private width = 0;
   private height = 0;
-  private frameScratch: Uint8ClampedArray<ArrayBuffer> | null = null;
+  private updateScratch: Uint8ClampedArray<ArrayBuffer> | null = null;
   private rgbaView: Uint32Array | null = null;
   private imageData: ImageData | null = null;
   private pending: RgbaRect[] = [];
@@ -134,9 +134,9 @@ export class ScreenCanvasRenderer {
   }
 
   /**
-   * Reset-frame geometry step: resize the canvas, clear it to opaque black,
+   * Reset-update geometry step: resize the canvas, clear it to opaque black,
    * and reallocate the scratch buffers. Called only for a validated reset
-   * frame, before its regions are applied.
+   * update, before its regions are applied.
    */
   resize(width: number, height: number): void {
     if (width < 1 || height < 1) {
@@ -148,9 +148,9 @@ export class ScreenCanvasRenderer {
     this.canvas.width = width;
     this.canvas.height = height;
     const scratch: Uint8ClampedArray<ArrayBuffer> = new Uint8ClampedArray(new ArrayBuffer(width * height * 4));
-    this.frameScratch = scratch;
+    this.updateScratch = scratch;
     // The scratch is allocated here and nowhere else, so the fast path's
-    // 32-bit view is built here too: no per-frame view allocation.
+    // 32-bit view is built here too: no per-update view allocation.
     this.rgbaView = this.byteOrder === "little" ? new Uint32Array(scratch.buffer) : null;
     this.imageData = new ImageData(scratch, width, height);
     this.pending = [];
@@ -162,17 +162,17 @@ export class ScreenCanvasRenderer {
   }
 
   /**
-   * Apply one frame's validated region set. The frame's geometry must match
+   * Apply one update's validated region set. The update's geometry must match
    * the size of {@link resize}; the stream rejects any other geometry before
    * calling in. The op streams were validated by the stream, so application is
    * a single walk per region with no intermediate representation.
    */
-  applyFrame(frame: { width: number; height: number }, regions: RenderRegion[]): void {
-    const scratch = this.frameScratch;
+  applyUpdate(update: { width: number; height: number }, regions: RenderRegion[]): void {
+    const scratch = this.updateScratch;
     if (!scratch || !this.imageData) {
       return;
     }
-    if (frame.width !== this.width || frame.height !== this.height) {
+    if (update.width !== this.width || update.height !== this.height) {
       return;
     }
 
@@ -190,9 +190,9 @@ export class ScreenCanvasRenderer {
         this.lut,
       );
       if (!verdict.ok) {
-        // Unreachable for a validated frame: the stream validates each region
+        // Unreachable for a validated update: the stream validates each region
         // with the same walker before it calls in. Fail loudly rather than
-        // acking a frame whose cells were not written.
+        // acking a update whose cells were not written.
         throw new Error(`region op stream failed validation: ${verdict.reason}`);
       }
       this.pending.push({

@@ -1,13 +1,13 @@
 /**
- * Screen-frame chunk parsing, validation, and assembly.
+ * Update part parsing, validation, and assembly.
  *
- * One frame arrives as one or more chunks that carry the same `updateId` and
- * replicate `partCount`/`updateBytes`. A chunk is validated in full before it
- * can join an assembly, and a frame is only handed on complete: the canvas
- * never sees a partial frame.
+ * One update arrives as one or more parts that carry the same `updateId` and
+ * replicate `partCount`/`updateBytes`. A part is validated in full before it
+ * can join an assembly, and a update is only handed on complete: the canvas
+ * never sees a partial update.
  */
 
-import { MAX_REGION_WIRE_BYTES, type ResyncReason } from "./screen-op";
+import { MAX_REGION_WIRE_BYTES, type ResyncReason } from "./op-stream";
 
 export type UpdateRegion = {
   x: number;
@@ -22,7 +22,7 @@ export type UpdateRegion = {
   payload: Uint8Array<ArrayBuffer>;
 };
 
-export type UpdateChunk = {
+export type UpdatePart = {
   updateId: number;
   baseUpdateId: number;
   width: number;
@@ -32,7 +32,7 @@ export type UpdateChunk = {
   updateBytes: number;
   codec: number;
   /**
-   * `flags.ANCHOR` (design §5.5.2): the frame's regions are absolute cell
+   * `flags.ANCHOR` (design §5.5.2): the update's regions are absolute cell
    * writes and may be applied onto any held state. The legacy control-lane
    * path leaves it unset.
    */
@@ -49,11 +49,11 @@ export type AssembledUpdate = {
   height: number;
   updateBytes: number;
   regions: UpdateRegion[];
-  chunks: number;
+  parts: number;
   anchor: boolean;
 };
 
-export type ChunkVerdict = { ok: true } | { ok: false; reason: ResyncReason };
+export type PartVerdict = { ok: true } | { ok: false; reason: ResyncReason };
 
 /** The one screen-stream codec id. Every other id is a hard reject. */
 export const CODEC_TESSELLIO = 8;
@@ -62,22 +62,22 @@ export const MAX_SURFACE_DIMENSION = 8192;
 export const MAX_SURFACE_CELLS = 16_777_216;
 export const MAX_UPDATE_WIRE_BYTES = 3_932_160;
 export const MAX_REGIONS_PER_UPDATE = 64;
-export const MAX_REGIONS_PER_CHUNK = 32;
-export const MAX_CHUNKS_PER_UPDATE = 8;
+export const MAX_REGIONS_PER_PART = 32;
+export const MAX_PARTS_PER_UPDATE = 8;
 
 export const DEFAULT_ASSEMBLY_LIMITS: AssemblyLimits = {
-  maxFrameBytes: MAX_UPDATE_WIRE_BYTES,
+  maxUpdateBytes: MAX_UPDATE_WIRE_BYTES,
   maxRegions: MAX_REGIONS_PER_UPDATE,
 };
 
 export type AssemblyLimits = {
-  maxFrameBytes: number;
+  maxUpdateBytes: number;
   maxRegions: number;
 };
 
 type AssembledRegion = UpdateRegion;
 
-type PartialFrame = {
+type PartialUpdate = {
   updateId: number;
   baseUpdateId: number;
   width: number;
@@ -85,7 +85,7 @@ type PartialFrame = {
   partCount: number;
   updateBytes: number;
   anchor: boolean;
-  nextChunkIndex: number;
+  nextPartIndex: number;
   bytes: number;
   regions: AssembledRegion[];
 };
@@ -141,14 +141,14 @@ function parseRegion(raw: unknown): UpdateRegion | null {
 }
 
 /**
- * Parse a decoded `screen.frame` chunk.
+ * Parse a decoded `screen.update` part.
  *
- * The shape is the generated `Update` object. A chunk whose
+ * The shape is the generated `Update` object. A part whose
  * identity fields are missing or non-integral, or that carries even one
  * unparseable region, is rejected as a whole: dropping a region and applying
- * the rest would paint a frame the host never sent.
+ * the rest would paint a update the host never sent.
  */
-export function parseScreenFrameChunk(raw: unknown): UpdateChunk | null {
+export function parseUpdatePart(raw: unknown): UpdatePart | null {
   if (!isRecord(raw)) {
     return null;
   }
@@ -227,58 +227,58 @@ function regionsAreOrdered(regions: UpdateRegion[]): boolean {
 }
 
 /**
- * Reject a chunk that cannot belong to a coherent frame.
+ * Reject a part that cannot belong to a coherent update.
  *
  * The reject vocabulary of the receiver is coarser than the field checks below,
- * so framing violations (identity fields, chunk identity, region payload
- * shape) map onto `CHUNK_GAP`/`DECODE_ERROR`/`GEOMETRY_MISMATCH`/
- * `INCOMPLETE_FRAME` — the reasons the host counts and acts on. Every check
- * runs before the chunk can touch an assembly, and a failure rejects the whole
- * frame.
+ * so framing violations (identity fields, part identity, region payload
+ * shape) map onto `PART_GAP`/`DECODE_ERROR`/`GEOMETRY_MISMATCH`/
+ * `INCOMPLETE_UPDATE` — the reasons the host counts and acts on. Every check
+ * runs before the part can touch an assembly, and a failure rejects the whole
+ * update.
  */
-export function validateChunk(chunk: UpdateChunk, limits: AssemblyLimits = DEFAULT_ASSEMBLY_LIMITS): ChunkVerdict {
-  if (chunk.codec !== CODEC_TESSELLIO) {
+export function validatePart(part: UpdatePart, limits: AssemblyLimits = DEFAULT_ASSEMBLY_LIMITS): PartVerdict {
+  if (part.codec !== CODEC_TESSELLIO) {
     return { ok: false, reason: "UNKNOWN_CODEC" };
   }
 
-  if (chunk.updateId < 1) {
-    return { ok: false, reason: "CHUNK_GAP" };
+  if (part.updateId < 1) {
+    return { ok: false, reason: "PART_GAP" };
   }
 
-  if (chunk.baseUpdateId !== 0 && chunk.baseUpdateId >= chunk.updateId) {
-    return { ok: false, reason: "CHUNK_GAP" };
+  if (part.baseUpdateId !== 0 && part.baseUpdateId >= part.updateId) {
+    return { ok: false, reason: "PART_GAP" };
   }
 
   if (
-    chunk.width < 1 ||
-    chunk.height < 1 ||
-    chunk.width > MAX_SURFACE_DIMENSION ||
-    chunk.height > MAX_SURFACE_DIMENSION ||
-    chunk.width * chunk.height > MAX_SURFACE_CELLS
+    part.width < 1 ||
+    part.height < 1 ||
+    part.width > MAX_SURFACE_DIMENSION ||
+    part.height > MAX_SURFACE_DIMENSION ||
+    part.width * part.height > MAX_SURFACE_CELLS
   ) {
     return { ok: false, reason: "GEOMETRY_MISMATCH" };
   }
 
-  if (chunk.partIndex < 0 || chunk.partCount < 1 || chunk.partCount > MAX_CHUNKS_PER_UPDATE || chunk.partIndex >= chunk.partCount) {
-    return { ok: false, reason: "CHUNK_GAP" };
+  if (part.partIndex < 0 || part.partCount < 1 || part.partCount > MAX_PARTS_PER_UPDATE || part.partIndex >= part.partCount) {
+    return { ok: false, reason: "PART_GAP" };
   }
 
-  if (chunk.updateBytes < 0 || chunk.updateBytes > limits.maxFrameBytes) {
-    return { ok: false, reason: "INCOMPLETE_FRAME" };
+  if (part.updateBytes < 0 || part.updateBytes > limits.maxUpdateBytes) {
+    return { ok: false, reason: "INCOMPLETE_UPDATE" };
   }
 
-  if (chunk.regions.length > MAX_REGIONS_PER_CHUNK) {
+  if (part.regions.length > MAX_REGIONS_PER_PART) {
     return { ok: false, reason: "DECODE_ERROR" };
   }
 
-  for (const region of chunk.regions) {
+  for (const region of part.regions) {
     if (
       region.x < 0 ||
       region.y < 0 ||
       region.width < 1 ||
       region.height < 1 ||
-      region.x + region.width > chunk.width ||
-      region.y + region.height > chunk.height
+      region.x + region.width > part.width ||
+      region.y + region.height > part.height
     ) {
       return { ok: false, reason: "DECODE_ERROR" };
     }
@@ -288,7 +288,7 @@ export function validateChunk(chunk: UpdateChunk, limits: AssemblyLimits = DEFAU
     }
   }
 
-  if (!regionsAreOrdered(chunk.regions) || !regionIsDisjoint(chunk.regions)) {
+  if (!regionsAreOrdered(part.regions) || !regionIsDisjoint(part.regions)) {
     return { ok: false, reason: "DECODE_ERROR" };
   }
 
@@ -296,19 +296,19 @@ export function validateChunk(chunk: UpdateChunk, limits: AssemblyLimits = DEFAU
 }
 
 /**
- * Assemble frames from their chunks.
+ * Assemble updates from their parts.
  *
- * Chunks of one frame must arrive as `partIndex` `0,1,2,…` on the ordered
- * stream; a different `updateId` before completion discards the partial frame.
- * The sum of the chunk payloads must equal the frame's declared `updateBytes`.
+ * Parts of one update must arrive as `partIndex` `0,1,2,…` on the ordered
+ * stream; a different `updateId` before completion discards the partial update.
+ * The sum of the part payloads must equal the update's declared `updateBytes`.
  */
-export class ScreenFrameAssembler {
+export class UpdateAssembler {
   private readonly limits: AssemblyLimits;
-  private partial: PartialFrame | null = null;
+  private partial: PartialUpdate | null = null;
 
-  constructor(limits?: { maxFrameBytes?: number; maxRegions?: number }) {
+  constructor(limits?: { maxUpdateBytes?: number; maxRegions?: number }) {
     this.limits = {
-      maxFrameBytes: limits?.maxFrameBytes ?? MAX_UPDATE_WIRE_BYTES,
+      maxUpdateBytes: limits?.maxUpdateBytes ?? MAX_UPDATE_WIRE_BYTES,
       maxRegions: limits?.maxRegions ?? MAX_REGIONS_PER_UPDATE,
     };
   }
@@ -319,88 +319,88 @@ export class ScreenFrameAssembler {
   }
 
   /**
-   * Feed one chunk. Returns a complete frame, a resync decision, or nothing
+   * Feed one part. Returns a complete update, a resync decision, or nothing
    * while an assembly is still in progress.
    */
-  push(chunk: UpdateChunk): { frame: AssembledUpdate | null; resync: ResyncReason | null } {
-    const verdict = validateChunk(chunk, this.limits);
+  push(part: UpdatePart): { update: AssembledUpdate | null; resync: ResyncReason | null } {
+    const verdict = validatePart(part, this.limits);
     if (!verdict.ok) {
       this.partial = null;
-      return { frame: null, resync: verdict.reason };
+      return { update: null, resync: verdict.reason };
     }
 
     const partial = this.partial;
-    if (partial === null || partial.updateId !== chunk.updateId) {
-      if (chunk.partIndex !== 0) {
+    if (partial === null || partial.updateId !== part.updateId) {
+      if (part.partIndex !== 0) {
         this.partial = null;
-        return { frame: null, resync: "CHUNK_GAP" };
+        return { update: null, resync: "PART_GAP" };
       }
       this.partial = {
-        updateId: chunk.updateId,
-        baseUpdateId: chunk.baseUpdateId,
-        width: chunk.width,
-        height: chunk.height,
-        partCount: chunk.partCount,
-        updateBytes: chunk.updateBytes,
-        anchor: chunk.anchor === true,
-        nextChunkIndex: 0,
+        updateId: part.updateId,
+        baseUpdateId: part.baseUpdateId,
+        width: part.width,
+        height: part.height,
+        partCount: part.partCount,
+        updateBytes: part.updateBytes,
+        anchor: part.anchor === true,
+        nextPartIndex: 0,
         bytes: 0,
         regions: [],
       };
     } else {
       if (
-        chunk.partIndex !== partial.nextChunkIndex ||
-        chunk.partCount !== partial.partCount ||
-        chunk.baseUpdateId !== partial.baseUpdateId ||
-        chunk.width !== partial.width ||
-        chunk.height !== partial.height ||
-        chunk.updateBytes !== partial.updateBytes ||
-        (chunk.anchor === true) !== partial.anchor
+        part.partIndex !== partial.nextPartIndex ||
+        part.partCount !== partial.partCount ||
+        part.baseUpdateId !== partial.baseUpdateId ||
+        part.width !== partial.width ||
+        part.height !== partial.height ||
+        part.updateBytes !== partial.updateBytes ||
+        (part.anchor === true) !== partial.anchor
       ) {
         this.partial = null;
-        return { frame: null, resync: "CHUNK_GAP" };
+        return { update: null, resync: "PART_GAP" };
       }
     }
 
     const current = this.partial;
     if (current === null) {
-      return { frame: null, resync: null };
+      return { update: null, resync: null };
     }
-    if (current.nextChunkIndex === 0) {
-      current.regions = chunk.regions;
+    if (current.nextPartIndex === 0) {
+      current.regions = part.regions;
       current.bytes = 0;
     } else {
-      current.regions = current.regions.concat(chunk.regions);
+      current.regions = current.regions.concat(part.regions);
     }
-    for (const region of chunk.regions) {
+    for (const region of part.regions) {
       current.bytes += region.payload.byteLength;
     }
-    current.nextChunkIndex += 1;
+    current.nextPartIndex += 1;
 
     if (current.bytes > current.updateBytes || current.regions.length > this.limits.maxRegions) {
       this.partial = null;
-      return { frame: null, resync: "INCOMPLETE_FRAME" };
+      return { update: null, resync: "INCOMPLETE_UPDATE" };
     }
 
-    if (current.nextChunkIndex < current.partCount) {
-      return { frame: null, resync: null };
+    if (current.nextPartIndex < current.partCount) {
+      return { update: null, resync: null };
     }
 
     if (current.bytes !== current.updateBytes) {
       this.partial = null;
-      return { frame: null, resync: "INCOMPLETE_FRAME" };
+      return { update: null, resync: "INCOMPLETE_UPDATE" };
     }
 
     this.partial = null;
     return {
-      frame: {
+      update: {
         updateId: current.updateId,
         baseUpdateId: current.baseUpdateId,
         width: current.width,
         height: current.height,
         updateBytes: current.updateBytes,
         regions: current.regions,
-        chunks: current.partCount,
+        parts: current.partCount,
         anchor: current.anchor,
       },
       resync: null,
