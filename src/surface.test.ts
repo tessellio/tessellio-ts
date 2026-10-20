@@ -35,7 +35,7 @@ type TestCanvas = {
   cells: Uint8ClampedArray;
   draws: Array<{ x: number; y: number; width: number; height: number }>;
   fills: Array<{ x: number; y: number; width: number; height: number; color: string }>;
-  readPixel: (x: number, y: number) => number[];
+  readCell: (x: number, y: number) => number[];
 };
 
 function createTestCanvas(width: number, height: number): TestCanvas {
@@ -101,7 +101,7 @@ function createTestCanvas(width: number, height: number): TestCanvas {
     cells,
     draws,
     fills,
-    readPixel: (x: number, y: number) =>
+    readCell: (x: number, y: number) =>
       Array.from(cells.subarray((y * canvas.width + x) * 4, (y * canvas.width + x) * 4 + 4)),
   };
 }
@@ -159,7 +159,7 @@ describe("SurfaceCanvasRenderer", () => {
     expect(harness.canvas.width).toBe(4);
     expect(harness.canvas.height).toBe(3);
     expect(harness.fills).toEqual([{ x: 0, y: 0, width: 4, height: 3, color: "#000000" }]);
-    expect(harness.readPixel(3, 2)).toEqual([0, 0, 0, 255]);
+    expect(harness.readCell(3, 2)).toEqual([0, 0, 0, 255]);
   });
 
   it("applies FILL and SPAN regions and writes them on flush", () => {
@@ -184,12 +184,12 @@ describe("SurfaceCanvasRenderer", () => {
     renderer.flush();
 
     expect(harness.draws).toEqual([{ x: 0, y: 0, width: 4, height: 1 }]);
-    expect(harness.readPixel(0, 0)).toEqual([255, 0, 0, 255]);
-    expect(harness.readPixel(1, 0)).toEqual([255, 0, 0, 255]);
-    expect(harness.readPixel(2, 0)).toEqual([0, 255, 0, 255]);
-    expect(harness.readPixel(3, 0)).toEqual([255, 255, 0, 255]);
+    expect(harness.readCell(0, 0)).toEqual([255, 0, 0, 255]);
+    expect(harness.readCell(1, 0)).toEqual([255, 0, 0, 255]);
+    expect(harness.readCell(2, 0)).toEqual([0, 255, 0, 255]);
+    expect(harness.readCell(3, 0)).toEqual([255, 255, 0, 255]);
     // The untouched row stays as the resize cleared it.
-    expect(harness.readPixel(0, 1)).toEqual([0, 0, 0, 255]);
+    expect(harness.readCell(0, 1)).toEqual([0, 0, 0, 255]);
     expect(renderer.dirtyRects).toEqual([]);
   });
 
@@ -214,10 +214,10 @@ describe("SurfaceCanvasRenderer", () => {
     slowRenderer.flush();
 
     expect(Array.from(slow.cells.subarray(0, 16))).toEqual(Array.from(fast.cells.subarray(0, 16)));
-    expect(slow.readPixel(0, 0)).toEqual([255, 0, 0, 255]);
-    expect(slow.readPixel(1, 0)).toEqual([255, 0, 0, 255]);
-    expect(slow.readPixel(2, 0)).toEqual([0, 255, 0, 255]);
-    expect(slow.readPixel(3, 0)).toEqual([255, 255, 0, 255]);
+    expect(slow.readCell(0, 0)).toEqual([255, 0, 0, 255]);
+    expect(slow.readCell(1, 0)).toEqual([255, 0, 0, 255]);
+    expect(slow.readCell(2, 0)).toEqual([0, 255, 0, 255]);
+    expect(slow.readCell(3, 0)).toEqual([255, 255, 0, 255]);
   });
 
   it("merges nearby regions into one putImageData and keeps distant ones apart", () => {
@@ -252,9 +252,9 @@ describe("SurfaceCanvasRenderer", () => {
       { x: 0, y: 0, width: 1, height: 1 },
       { x: 15, y: 15, width: 1, height: 1 },
     ]);
-    expect(far.readPixel(0, 0)).toEqual([255, 0, 0, 255]);
-    expect(far.readPixel(15, 15)).toEqual([255, 0, 0, 255]);
-    expect(far.readPixel(8, 8)).toEqual([0, 0, 0, 255]);
+    expect(far.readCell(0, 0)).toEqual([255, 0, 0, 255]);
+    expect(far.readCell(15, 15)).toEqual([255, 0, 0, 255]);
+    expect(far.readCell(8, 8)).toEqual([0, 0, 0, 255]);
   });
 
   it("ignores a update whose geometry does not match the last resize", () => {
@@ -275,6 +275,6 @@ describe("SurfaceCanvasRenderer", () => {
     expect(renderer.dirtyRects).toEqual([]);
     renderer.flush();
     expect(harness.draws).toEqual([]);
-    expect(harness.readPixel(0, 0)).toEqual([0, 0, 0, 255]);
+    expect(harness.readCell(0, 0)).toEqual([0, 0, 0, 255]);
   });
 });

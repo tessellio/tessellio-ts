@@ -32,7 +32,7 @@ export type UpdatePart = {
   updateBytes: number;
   codec: number;
   /**
-   * `flags.ANCHOR` (design §5.5.2): the update's regions are absolute cell
+   * An absolute update: the regions are absolute cell
    * writes and may be applied onto any held state. The legacy control-lane
    * path leaves it unset.
    */

@@ -56,7 +56,7 @@ const VERDICT_DECODE: DecodeResult = { ok: false, reason: "DECODE_ERROR" };
 const VERDICT_COVERAGE: DecodeResult = { ok: false, reason: "COVERAGE_INVALID" };
 
 /**
- * Walk one region's op stream: parse it, enforce the §4.3 grammar rules and
+ * Walk one region's op stream: parse it, enforce the grammar rules and
  * the mode's coverage rule, and write every run into `target` when one is
  * supplied.
  *

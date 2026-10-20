@@ -35,7 +35,7 @@ function canonicalHex(hex: string): string {
 }
 
 /** The little-endian the 16-bit cell format byte view of a decoded canvas, as hex. */
-function pixelsToHex(cells: Uint16Array): string {
+function cellsToHex(cells: Uint16Array): string {
   const bytes = new Uint8Array(cells.length * 2);
   for (let index = 0; index < cells.length; index += 1) {
     bytes[index * 2] = cells[index] & 0xff;
@@ -214,7 +214,7 @@ describe("hand-derived conformance vectors", () => {
     const expected = expectedCanvas(8, 4, [
       [2, 1, [0xf800, 0x07e0, 0x001f, 0xffff]],
     ]);
-    expect(pixelsToHex(canvas)).toBe(pixelsToHex(expected));
+    expect(cellsToHex(canvas)).toBe(cellsToHex(expected));
   });
 
   it("V3 paints every row of a full-coverage reset update", async () => {
@@ -246,7 +246,7 @@ describe("hand-derived conformance vectors", () => {
       [0, 1, [0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff]],
       [0, 2, [0x8410, 0x8410, 0x8410, 0x8410, 0x8410, 0x8410]],
     ]);
-    expect(pixelsToHex(canvas)).toBe(pixelsToHex(expected));
+    expect(cellsToHex(canvas)).toBe(cellsToHex(expected));
   });
 
   it("V4 paints two sparse regions and leaves the skipped rows untouched", async () => {
@@ -282,7 +282,7 @@ describe("hand-derived conformance vectors", () => {
       [6, 1, [0xf81f, 0x07ff]],
       [3, 2, [0x0000]],
     ]);
-    expect(pixelsToHex(canvas)).toBe(pixelsToHex(expected));
+    expect(cellsToHex(canvas)).toBe(cellsToHex(expected));
   });
 
   it("V5 applies a two-part update only after both parts", async () => {
@@ -325,7 +325,7 @@ describe("hand-derived conformance vectors", () => {
       [1, 1, [0xf800]],
       [2, 0, [0x07e0]],
     ]);
-    expect(pixelsToHex(canvas)).toBe(pixelsToHex(expected));
+    expect(cellsToHex(canvas)).toBe(cellsToHex(expected));
   });
 });
 
@@ -782,7 +782,7 @@ if (corpus === null) {
           }
 
           if (update.expect?.cells565) {
-            expect(pixelsToHex(canvas)).toBe(canonicalHex(update.expect.cells565));
+            expect(cellsToHex(canvas)).toBe(canonicalHex(update.expect.cells565));
           } else {
             // A large canvas records its exact byte length and CRC instead of
             // the full cell hex; both are verified, exactly as the Rust
