@@ -72,6 +72,7 @@ cells it names. An update is applied whole: every part of it, or none.
 ## Verifying it
 
 ```sh
+npm install
 npm test        # the unit suites and the corpus consumer
 npm run typecheck
 ```
@@ -81,6 +82,21 @@ The corpus the browser suite reads is the one committed in
 A codec that changes a byte cannot pass in one language and fail in the
 other, because both read the same file.
 
+## Status
+
+In development. One moving version, `v0.1.0`, naming the current commit:
+there is exactly one tag, and a change moves it.
+
 ## Licence
 
 PolyForm Noncommercial License 1.0.0. See [LICENSE](LICENSE).
+
+## The sibling repositories
+
+| repository | what it holds |
+|---|---|
+| [`tessellio`](https://github.com/tessellio/tessellio) | the normative specification |
+| [`tessellio-core`](https://github.com/tessellio/tessellio-core) | the Rust reference implementation, and the codec's command-line tool |
+| [`tessellio-ts`](https://github.com/tessellio/tessellio-ts) | the browser reference implementation |
+| [`tessellio-proto`](https://github.com/tessellio/tessellio-proto) | the update envelope's wire schema |
+| [`tessellio-conformance`](https://github.com/tessellio/tessellio-conformance) | the conformance corpus and its gate |
