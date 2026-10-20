@@ -9,10 +9,13 @@
  * - a scroll delta — one 1680×40 strip;
  * - a typing delta — one 600×40 text cell.
  *
- * The medians are the budget: 45 ms for the reset, 9 ms for the scroll, and
- * 5 ms for the typing. The canvas is a recording double, so what is measured
- * is the codec's work — inflating the op streams and painting the cells — and
- * not the browser's own canvas write.
+ * The medians are the budget: 32 ms for the reset, 5 ms for the scroll, and
+ * 2 ms for the typing. Each budget is the measured median plus a margin, so
+ * a real growth in the codec's decode-and-apply cost fails the suite, while
+ * the run-to-run spread and a dependency that shifts the compressed size by
+ * a few per cent do not. The canvas is a recording double, so what is
+ * measured is the codec's work — inflating the op streams and painting the
+ * cells — and not the browser's own canvas write.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -393,9 +396,17 @@ describe("the codec's browser decode+apply budgets", () => {
         `MEASURE_JS budgets: reset med=${resetMedian.toFixed(2)} p95=${[...resetLatencies].sort((a, b) => a - b)[19].toFixed(2)} scroll med=${scrollMedian.toFixed(2)} typing med=${typingMedian.toFixed(2)} reported med=${reportedMedian.toFixed(2)}`,
       );
 
-      expect(resetMedian).toBeLessThanOrEqual(45);
-      expect(scrollMedian).toBeLessThanOrEqual(9);
-      expect(typingMedian).toBeLessThanOrEqual(5);
+      // The reset: a full-screen 1080p self-contained update — the whole
+      // surface, in five bands, inflated and painted in one apply. The
+      // measured median is 19–22 ms, and the budget is that plus a margin.
+      expect(resetMedian).toBeLessThanOrEqual(32);
+      // The scroll: one 1680×40 strip, inflated and painted over the band it
+      // moved. The measured median is 2.7–3.7 ms, and the budget is that
+      // plus a margin.
+      expect(scrollMedian).toBeLessThanOrEqual(5);
+      // The typing: one 600×40 text cell. The measured median is 1.3–1.6 ms,
+      // and the budget is that plus a margin.
+      expect(typingMedian).toBeLessThanOrEqual(2);
     },
     120_000,
   );
