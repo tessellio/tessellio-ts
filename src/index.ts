@@ -11,8 +11,11 @@
  * - {@link module:update-parts} — the part assembler and the update's
  *   validation.
  * - {@link module:surface} — the surface the receiver draws on.
+ * - {@link module:surface-stream} — the codec's surface stream: the parts of
+ *   an update applied and painted, and the state they leave behind.
  */
 
 export * from "./op-stream";
+export * from "./surface-stream";
 export * from "./update-parts";
 export * from "./surface";

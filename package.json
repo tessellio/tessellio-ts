@@ -10,7 +10,8 @@
     ".": "./src/index.ts",
     "./op": "./src/op-stream.ts",
     "./parts": "./src/update-parts.ts",
-    "./surface": "./src/surface.ts"
+    "./surface": "./src/surface.ts",
+    "./stream": "./src/surface-stream.ts"
   },
   "files": [
     "src",
