@@ -396,17 +396,14 @@ describe("the codec's browser decode+apply budgets", () => {
         `MEASURE_JS budgets: reset med=${resetMedian.toFixed(2)} p95=${[...resetLatencies].sort((a, b) => a - b)[19].toFixed(2)} scroll med=${scrollMedian.toFixed(2)} typing med=${typingMedian.toFixed(2)} reported med=${reportedMedian.toFixed(2)}`,
       );
 
-      // The reset: a full-screen 1080p self-contained update — the whole
-      // surface, in five bands, inflated and painted in one apply. The
-      // measured median is 19–22 ms, and the budget is that plus a margin.
-      expect(resetMedian).toBeLessThanOrEqual(32);
-      // The scroll: one 1680×40 strip, inflated and painted over the band it
-      // moved. The measured median is 2.7–3.7 ms, and the budget is that
-      // plus a margin.
-      expect(scrollMedian).toBeLessThanOrEqual(5);
-      // The typing: one 600×40 text cell. The measured median is 1.3–1.6 ms,
-      // and the budget is that plus a margin.
-      expect(typingMedian).toBeLessThanOrEqual(2);
+      // The budgets are regression gates, not speed records: they sit at
+      // roughly 2.5× the median a fast dev machine measures (reset 19–22 ms,
+      // scroll 2.7–3.7 ms, typing 1.3–1.6 ms) because a slower box — the
+      // CI's software canvas measures about twice that — is still a healthy
+      // decode path, while a real regression is a multiple, not a margin.
+      expect(resetMedian).toBeLessThanOrEqual(60);
+      expect(scrollMedian).toBeLessThanOrEqual(9);
+      expect(typingMedian).toBeLessThanOrEqual(4.5);
     },
     120_000,
   );
